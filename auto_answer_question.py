@@ -1,13 +1,16 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from cnocr import CnOcr
-from model import get_model
-import time
-import random
 import logging
+import random
+import time
+
+import os
+
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+
+from cnocr import CnOcr
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+
+from model import get_model
 
 # 设置日志级别为WARNING，这样ERROR级别的日志将不会被打印
 logging.getLogger('selenium').setLevel(logging.WARNING)
@@ -17,6 +20,7 @@ ocr = CnOcr()
 # 初始化模型
 model = get_model()
 
+
 def error_handler(func):
     def wrapper(*args, **kwargs):
         while True:
@@ -25,7 +29,9 @@ def error_handler(func):
             except Exception as e:
                 print(f"函数 {func.__name__} 发生错误: {e}")
                 input("请修复错误并按回车键继续...")
+
     return wrapper
+
 
 def get_driver(url):
     options = webdriver.ChromeOptions()
@@ -38,15 +44,19 @@ def get_driver(url):
     time.sleep(random.uniform(0.5, 2))
     return driver
 
+
 def get_test_num(driver):
-    test_list = driver.find_elements(By.XPATH, '//div[@id="examBox"]/div/ul/li')
+    # 调整为新网站的题目列表获取方式
+    test_list = driver.find_elements(By.CLASS_NAME, 'singleQuesId')
     return len(test_list)
+
 
 def text_orc(image='question.png'):
     ocr_results = ocr.ocr(image)
     # 提取文本内容
     extracted_text = '\n'.join([item['text'] for item in ocr_results if item['text'].strip()])
     return extracted_text
+
 
 def get_answer(question):
     prompt = f"""
@@ -65,94 +75,129 @@ def get_answer(question):
     index = 0
     while True:
         cur_answer = model.get_response(prompt)
-        print(f'大模型第{index+1}次输出：{cur_answer}')
+        print(f'大模型第{index + 1}次输出：{cur_answer}')
         if cur_answer in answer_list:
             return cur_answer
         answer_list.append(cur_answer)
         index += 1
 
+
 @error_handler
 def answer(driver, index):
-    question_element = driver.find_elements(By.XPATH, '//div[@class="examPaper_subject mt20"]')[index]
+    # 根据新网站的HTML结构调整
+    question_elements = driver.find_elements(By.CLASS_NAME, 'TiMu')
+    question_element = question_elements[index]
+
+    # 截图并识别题目
     question_element.screenshot('question.png')
     question_str = text_orc()
-    print(f'第{index+1}题：{question_str}')
+    print(f'第{index + 1}题：{question_str}')
 
-    answer = get_answer(question_str) # answer 形如'A'  或 'B,D' 或 '对' 
+    # 获取答案
+    answer = get_answer(question_str)
     print(f'最终答案：{answer}')
 
-    # 判断题中对与错的顺序可能不一样
-    if '对' in answer or '错' in answer: # 判断题
-        answer_elements = question_element.find_elements(By.XPATH, './/div[@class="label clearfix"]')
-        for answer_element in answer_elements:
-            if answer_element.text.strip() in answer:
-                answer_element.click()
-                time.sleep(random.uniform(0.2, 0.5))
-                break
-    else: # 选择题
-        answer_list = []
-        if ',' in answer: # 多选题
-            answer_list = [(ord(i)-ord('A')) for i in answer.split(',')]
-        else: # 单选题
-            answer_list = [(ord(answer)-ord('A'))]
-        for answer in answer_list:
-            question_element.find_elements(By.XPATH, './/div[@class="label clearfix"]')[answer].click()
+    # 选择题处理
+    choice_elements = question_element.find_elements(By.CLASS_NAME, 'before-after')
+
+    # 判断题型（单选或多选）
+    check_box = question_element.find_elements(By.CLASS_NAME, 'before-after-checkbox')
+    is_multiple = False
+    if check_box:
+        is_multiple = True
+        choice_elements = check_box
+
+    if is_multiple:  # 多选题
+        answer_indices = [ord(a) - ord('A') for a in answer.split(',')]
+        for index in answer_indices:
+            choice_elements[index].click()
             time.sleep(random.uniform(0.2, 0.5))
+    elif answer == '对' or answer == '错':  # 单选题
+        for choice_element in choice_elements:
+            if choice_element.text[-1:] == answer:
+                choice_element.click()
+                time.sleep(random.uniform(0.2, 0.5))
+    else:
+        answer_index = ord(answer) - ord('A')
+        choice_elements[answer_index].click()
+        time.sleep(random.uniform(0.2, 0.5))
+
 
 def auto_answer(driver):
-    index = 0
-    while True:
+    driver.switch_to.default_content()
+    driver.switch_to.frame('iframe')
+    driver.switch_to.frame(0)
+    driver.switch_to.frame('frame_content')
+    total_questions = get_test_num(driver)
+    for index in range(total_questions):
         answer(driver, index)
-        # 下一题
-        next_button = driver.find_elements(By.XPATH, '//button[@class="el-button el-button--primary is-plain"]')[-1]
-        if next_button.text.strip() == '保存':
-            # 提交作业
-            submit_button = driver.find_element(By.XPATH, '//button[@class="el-button el-button--text btnStyleX btnStyleXSumit"]')
+
+        # 如果是最后一题，点击提交
+        if index == total_questions - 1:
+            submit_button = driver.find_element(By.CLASS_NAME, 'btnSubmit')
             submit_button.click()
             time.sleep(random.uniform(1, 2))
-            # driver.switch_to.alert.accept()
-            input("请手动完成提交后按回车继续...")
-            # conform_button = driver.find_element(By.XPATH, '//button[@class="el-button el-button--default el-button--small el-button--primary"]')
-            # conform_button.click()
+
+            # 确认提交弹窗
+            driver.switch_to.default_content()
+            driver.find_element(By.XPATH, '//*[@id="popok"]').click()
+
             print("提交成功")
             return
-        next_button.click()
-        time.sleep(random.uniform(0.5, 1))
-        index += 1
 
-# 按顺序自动做所有测试
-@error_handler
-def auto_answer_tests(driver):
+
+def handle_driver(driver):
+    # 章节测验 class：TestTitle_name
+    # 任务点未完成 class：ans-job-icon
+    # 任务点已完成 class：ans-job-icon-clear
+    # 下一节 id：prevNextFocusNext
+
     while True:
-        test_num = get_test_num(driver)
-        print("共有{}个测试待做".format(test_num))
-        if test_num == 0:
-            print("暂无可做的测试")
-            return
-        # 选择第一个测试
-        todo_test = driver.find_element(By.XPATH, '//div[@id="examBox"]/div/ul/li')
-        start_button = todo_test.find_element(By.XPATH, './/a[@title="开始答题"]')
-        # driver.execute_script("arguments[0].click();", start_button)
-        start_button.click()
-        print("开始答题")
-        time.sleep(random.uniform(3, 5))
-        # 获取当前窗口的句柄
-        current_window_handle = driver.current_window_handle
-        # 获取所有窗口的句柄
-        window_handles = driver.window_handles
-        # 切换到新的窗口
-        driver.switch_to.window(window_handles[-1])
+        driver.switch_to.default_content()
+
+        next_btn = driver.find_element(By.ID, 'prevNextFocusNext')
+        if next_btn is None:
+            print("已经是最后一节，结束")
+            break
+        driver.switch_to.frame('iframe')
+
+        try:
+            icon = driver.find_element(By.CLASS_NAME, 'ans-job-icon')
+            if icon.get_attribute("aria-label") == '任务点已完成':
+                print("当前任务点已完成")
+                driver.switch_to.default_content()
+                next_btn.click()
+                time.sleep(2)
+                continue
+        except:
+            pass
+
+        print("当前任务点未完成")
+
+        try:
+            driver.switch_to.frame(0)
+            driver.switch_to.frame('frame_content')
+        except Exception:
+            print("当前页面不是测验页面")
+            driver.switch_to.default_content()
+            next_btn.click()
+            time.sleep(2)
+            continue
+        print("当前页面是测验页面")
+
         auto_answer(driver)
-        # 答题结束后，切换回原来的窗口
-        driver.switch_to.window(current_window_handle)
+        time.sleep(2)
+
 
 def main(url):
     driver = get_driver(url)
-    input("请登录后按回车继续...")
-    auto_answer_tests(driver)
+    input("请登录并进入测试页面后按回车继续...")
+    handle_driver(driver)
     input("请按任意键退出...")
     driver.quit()
 
+
 if __name__ == '__main__':
-    url = input("请输入页面链接：")
+    # url = input("请输入页面链接：")
+    url = "你的网课url"
     main(url)

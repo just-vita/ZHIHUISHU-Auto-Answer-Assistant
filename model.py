@@ -22,19 +22,22 @@ class Model:
 
 def get_model():
     model_dict = {
-        '1' : 'Kimi',
-        '2' : 'ChatGLM'
+        '1': 'Kimi',
+        '2': 'ChatGLM'
     }
     while True:
         try:
-            model_num = input("请输入模型编号：\n 1. Kimi\n 2. ChatGLM\n")
-            assert model_num in model_dict.keys()
+            # model_num = input("请输入模型编号：\n 1. Kimi\n 2. ChatGLM\n")
+            # assert model_num in model_dict.keys()
+            # model_name = model_dict[model_num]
+            model_num = '2'
             model_name = model_dict[model_num]
             break
         except:
             print("输入错误，请重新输入！")
 
-    api_key = input("请输入api_key：")
+    # api_key = input("请输入api_key：")
+    api_key = "你的api_key"
     return Model(model_name, api_key)
 
 # # Example usage:
