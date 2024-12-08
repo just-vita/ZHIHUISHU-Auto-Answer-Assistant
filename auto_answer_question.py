@@ -155,8 +155,9 @@ def handle_driver(driver):
     while True:
         driver.switch_to.default_content()
 
-        next_btn = driver.find_element(By.ID, 'prevNextFocusNext')
-        if next_btn is None:
+        try:
+            next_btn = driver.find_element(By.ID, 'prevNextFocusNext')
+        except:
             print("已经是最后一节，结束")
             break
         driver.switch_to.frame('iframe')
